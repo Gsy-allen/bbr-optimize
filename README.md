@@ -64,13 +64,34 @@
 
 ## 快速开始
 
-### 1. 交互模式
+### 1. 一键使用
+
+可直接在目标 VPS 上执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Gsy-allen/bbr-optimize/refs/heads/master/enable-bbr-fq.sh)
+```
+
+如需直接指定场景，例如：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Gsy-allen/bbr-optimize/refs/heads/master/enable-bbr-fq.sh) --scenario general-server
+```
+
+如果系统未安装 `curl`，也可以先下载后执行：
+
+```bash
+wget -O enable-bbr-fq.sh https://raw.githubusercontent.com/Gsy-allen/bbr-optimize/refs/heads/master/enable-bbr-fq.sh
+sudo bash enable-bbr-fq.sh
+```
+
+### 2. 交互模式
 
 ```bash
 sudo bash enable-bbr-fq.sh
 ```
 
-### 2. 指定场景执行
+### 3. 指定场景执行
 
 ```bash
 sudo bash enable-bbr-fq.sh --scenario proxy-relay
@@ -85,7 +106,7 @@ sudo bash enable-bbr-fq.sh --scenario general-server
 sudo bash enable-bbr-fq.sh --scenario auto
 ```
 
-### 3. 查看帮助
+### 4. 查看帮助
 
 ```bash
 bash enable-bbr-fq.sh --help
