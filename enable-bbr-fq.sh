@@ -56,13 +56,18 @@ ensure_supported_os() {
 
 check_virtualization() {
   local marker=""
+  local line
 
   if command -v systemd-detect-virt >/dev/null 2>&1; then
     marker="$(systemd-detect-virt 2>/dev/null || true)"
   fi
 
   if [[ -z "$marker" ]] && [[ -f /proc/1/environ ]]; then
-    marker="$(tr '\0' '\n' </proc/1/environ 2>/dev/null | grep -E 'container=' | head -n 1 | cut -d= -f2 || true)"
+    while IFS= read -r line; do
+      [[ "$line" == container=* ]] || continue
+      marker="${line#container=}"
+      break
+    done < <(tr '\0' '\n' </proc/1/environ 2>/dev/null)
   fi
 
   case "$marker" in
@@ -272,107 +277,65 @@ scenario_values() {
   local scenario="$1"
   local tier="$2"
 
+  if [[ "$scenario" == "auto" ]]; then
+    scenario="general-server"
+  fi
+
   case "$scenario:$tier" in
-    auto:small|general-server:small)
-      cat <<'EOF'
-net.core.netdev_max_backlog=8192
-net.core.somaxconn=512
-net.ipv4.tcp_max_syn_backlog=1024
-net.ipv4.tcp_notsent_lowat=8192
-EOF
+    general-server:small)
+      emit_scenario_values 8192 512 1024 8192
       ;;
-    auto:medium|general-server:medium)
-      cat <<'EOF'
-net.core.netdev_max_backlog=16384
-net.core.somaxconn=1024
-net.ipv4.tcp_max_syn_backlog=2048
-net.ipv4.tcp_notsent_lowat=16384
-EOF
+    general-server:medium)
+      emit_scenario_values 16384 1024 2048 16384
       ;;
-    auto:large|general-server:large)
-      cat <<'EOF'
-net.core.netdev_max_backlog=32768
-net.core.somaxconn=2048
-net.ipv4.tcp_max_syn_backlog=4096
-net.ipv4.tcp_notsent_lowat=32768
-EOF
+    general-server:large)
+      emit_scenario_values 32768 2048 4096 32768
       ;;
     proxy-relay:small)
-      cat <<'EOF'
-net.core.netdev_max_backlog=16384
-net.core.somaxconn=1024
-net.ipv4.tcp_max_syn_backlog=2048
-net.ipv4.tcp_notsent_lowat=16384
-EOF
+      emit_scenario_values 16384 1024 2048 16384
       ;;
     proxy-relay:medium)
-      cat <<'EOF'
-net.core.netdev_max_backlog=32768
-net.core.somaxconn=2048
-net.ipv4.tcp_max_syn_backlog=4096
-net.ipv4.tcp_notsent_lowat=32768
-EOF
+      emit_scenario_values 32768 2048 4096 32768
       ;;
     proxy-relay:large)
-      cat <<'EOF'
-net.core.netdev_max_backlog=65536
-net.core.somaxconn=4096
-net.ipv4.tcp_max_syn_backlog=8192
-net.ipv4.tcp_notsent_lowat=65536
-EOF
+      emit_scenario_values 65536 4096 8192 65536
       ;;
     streaming-relay:small)
-      cat <<'EOF'
-net.core.netdev_max_backlog=20480
-net.core.somaxconn=1024
-net.ipv4.tcp_max_syn_backlog=2048
-net.ipv4.tcp_notsent_lowat=32768
-EOF
+      emit_scenario_values 20480 1024 2048 32768
       ;;
     streaming-relay:medium)
-      cat <<'EOF'
-net.core.netdev_max_backlog=40960
-net.core.somaxconn=2048
-net.ipv4.tcp_max_syn_backlog=4096
-net.ipv4.tcp_notsent_lowat=65536
-EOF
+      emit_scenario_values 40960 2048 4096 65536
       ;;
     streaming-relay:large)
-      cat <<'EOF'
-net.core.netdev_max_backlog=65536
-net.core.somaxconn=4096
-net.ipv4.tcp_max_syn_backlog=8192
-net.ipv4.tcp_notsent_lowat=131072
-EOF
+      emit_scenario_values 65536 4096 8192 131072
       ;;
     high-concurrency-edge:small)
-      cat <<'EOF'
-net.core.netdev_max_backlog=24576
-net.core.somaxconn=2048
-net.ipv4.tcp_max_syn_backlog=4096
-net.ipv4.tcp_notsent_lowat=16384
-EOF
+      emit_scenario_values 24576 2048 4096 16384
       ;;
     high-concurrency-edge:medium)
-      cat <<'EOF'
-net.core.netdev_max_backlog=49152
-net.core.somaxconn=4096
-net.ipv4.tcp_max_syn_backlog=8192
-net.ipv4.tcp_notsent_lowat=32768
-EOF
+      emit_scenario_values 49152 4096 8192 32768
       ;;
     high-concurrency-edge:large)
-      cat <<'EOF'
-net.core.netdev_max_backlog=98304
-net.core.somaxconn=8192
-net.ipv4.tcp_max_syn_backlog=16384
-net.ipv4.tcp_notsent_lowat=65536
-EOF
+      emit_scenario_values 98304 8192 16384 65536
       ;;
     *)
       fail "不支持的场景/资源档位组合：$scenario / $tier"
       ;;
   esac
+}
+
+emit_scenario_values() {
+  local netdev_max_backlog="$1"
+  local somaxconn="$2"
+  local tcp_max_syn_backlog="$3"
+  local tcp_notsent_lowat="$4"
+
+  cat <<EOF
+net.core.netdev_max_backlog=$netdev_max_backlog
+net.core.somaxconn=$somaxconn
+net.ipv4.tcp_max_syn_backlog=$tcp_max_syn_backlog
+net.ipv4.tcp_notsent_lowat=$tcp_notsent_lowat
+EOF
 }
 
 make_backup_dir() {
@@ -384,13 +347,21 @@ make_backup_dir() {
 
 cleanup_old_backups() {
   local backups=()
+  local path
   local index
 
-  mapfile -t backups < <(ls -1dt ${BACKUP_PREFIX}* 2>/dev/null || true)
+  shopt -s nullglob
+  for path in "${BACKUP_PREFIX}"*; do
+    [[ -d "$path" ]] || continue
+    backups+=("$path")
+  done
+  shopt -u nullglob
 
   if (( ${#backups[@]} <= MAX_BACKUP_COUNT )); then
     return
   fi
+
+  mapfile -t backups < <(printf '%s\n' "${backups[@]}" | sort -r)
 
   for (( index = MAX_BACKUP_COUNT; index < ${#backups[@]}; index++ )); do
     rm -rf -- "${backups[$index]}"
@@ -478,9 +449,41 @@ verify_changes() {
 
   [[ "$cc" == "bbr" ]] || fail "验证失败：tcp_congestion_control=$cc"
   [[ "$qdisc" == "fq" ]] || fail "验证失败：default_qdisc=$qdisc"
-  [[ "$iface_qdisc" == *" fq "* || "$iface_qdisc" == fq* ]] || fail "验证失败：$iface 上的 qdisc 不是 fq"
+  [[ "$(extract_root_qdisc_kind "$iface_qdisc")" == "fq" ]] || fail "验证失败：$iface 上的 root qdisc 不是 fq"
 
   printf '%s\n' "$iface_qdisc"
+}
+
+extract_root_qdisc_kind() {
+  local qdisc_output="$1"
+  local line
+
+  while IFS= read -r line; do
+    [[ "$line" == qdisc\ *\ root\ * ]] || continue
+    line="${line#qdisc }"
+    printf '%s\n' "${line%% *}"
+    return
+  done <<<"$qdisc_output"
+
+  printf '%s\n' ''
+}
+
+restore_iface_qdisc_from_backup() {
+  local iface="$1"
+  local restore_dir="$2"
+  local qdisc_backup_file="$restore_dir/tc-qdisc-$iface.txt"
+  local root_qdisc_kind=""
+
+  if [[ -f "$qdisc_backup_file" ]]; then
+    root_qdisc_kind="$(extract_root_qdisc_kind "$(<"$qdisc_backup_file")")"
+  fi
+
+  if [[ -n "$root_qdisc_kind" ]]; then
+    tc qdisc replace dev "$iface" root "$root_qdisc_kind"
+    return
+  fi
+
+  tc qdisc del dev "$iface" root >/dev/null 2>&1 || true
 }
 
 collect_current_values() {
@@ -561,14 +564,7 @@ restore_from_backup() {
 
   restore_file_if_present "sysctl.conf" "$restore_dir" "/etc/sysctl.conf"
   sysctl --system >/dev/null
-
-  if [[ -f "$restore_dir/tc-qdisc-$iface.txt" ]]; then
-    if grep -q ' fq ' "$restore_dir/tc-qdisc-$iface.txt" || grep -q '^qdisc fq ' "$restore_dir/tc-qdisc-$iface.txt"; then
-      tc qdisc replace dev "$iface" root fq
-    else
-      tc qdisc del dev "$iface" root >/dev/null 2>&1 || true
-    fi
-  fi
+  restore_iface_qdisc_from_backup "$iface" "$restore_dir"
 
   restored_iface_qdisc="$(tc qdisc show dev "$iface" 2>/dev/null || true)"
 
@@ -628,7 +624,7 @@ main() {
   after_iface_qdisc="$(verify_changes "$iface")"
   collect_current_values after
 
-  log "系统：$(. /etc/os-release && printf '%s %s' "${NAME:-unknown}" "${VERSION_ID:-unknown}")"
+  log "系统：${NAME:-unknown} ${VERSION_ID:-unknown}"
   log "内核版本：$(uname -r)"
   log "主网络接口：$iface"
   log "检测到的资源：CPU=${cpu_cores}，内存=${mem_mb}MB，带宽=${link_mbps}Mbps"

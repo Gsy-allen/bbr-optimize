@@ -131,7 +131,8 @@ sudo bash enable-bbr-fq.sh --restore /root/bbr-fq-backup-20260329-123456
 - 恢复 `/etc/sysctl.d/99-bbr-fq-tuned.conf`
 - 恢复 `/etc/sysctl.conf`（如果备份中存在）
 - 执行 `sysctl --system`
-- 尽量恢复主网卡 qdisc
+- 在可识别备份内容时，恢复主网卡原有的 root qdisc 类型
+- 如果无法从备份中识别原有 root qdisc，则回退为删除当前 root qdisc，让系统恢复默认行为
 
 ## 变更范围
 
@@ -155,7 +156,7 @@ sudo bash enable-bbr-fq.sh --restore /root/bbr-fq-backup-20260329-123456
 - `/etc/sysctl.conf`（如果存在）
 - 旧的 `/etc/sysctl.d/99-bbr-fq-tuned.conf`（如果存在）
 - 当前目标 sysctl 参数快照
-- 当前 qdisc 状态
+- 当前主网卡与全局 qdisc 状态
 - 相关 sysctl 配置的潜在冲突位置
 
 ## 常见问题
