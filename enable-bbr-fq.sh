@@ -5,6 +5,7 @@ SCRIPT_NAME="$(basename "$0")"
 TARGET_SYSCTL_FILE="/etc/sysctl.d/99-bbr-fq-tuned.conf"
 BACKUP_PREFIX="/root/bbr-fq-backup-"
 MAX_BACKUP_COUNT=5
+HAS_DEFAULT_QDISC=0
 TARGET_KEYS=(
   "net.core.default_qdisc"
   "net.ipv4.tcp_congestion_control"
@@ -121,6 +122,11 @@ get_link_mbps() {
 get_sysctl_value() {
   local key="$1"
   sysctl -n "$key" 2>/dev/null || true
+}
+
+has_sysctl_key() {
+  local key="$1"
+  [[ -e "/proc/sys/${key//./\/}" ]]
 }
 
 normalize_value() {
@@ -413,12 +419,19 @@ backup_conflicts() {
 render_sysctl_file() {
   local scenario="$1"
   local tier="$2"
+
   cat <<EOF
 # Managed by $SCRIPT_NAME
 # Backup before change is stored separately by this script.
 # Scenario: $scenario
 # Resource tier: $tier
-net.core.default_qdisc=fq
+EOF
+
+  if (( HAS_DEFAULT_QDISC )); then
+    printf '%s\n' 'net.core.default_qdisc=fq'
+  fi
+
+  cat <<EOF
 net.ipv4.tcp_congestion_control=bbr
 $(scenario_values "$scenario" "$tier")
 EOF
@@ -444,11 +457,15 @@ verify_changes() {
   local iface_qdisc
 
   cc="$(get_sysctl_value net.ipv4.tcp_congestion_control)"
-  qdisc="$(get_sysctl_value net.core.default_qdisc)"
   iface_qdisc="$(tc qdisc show dev "$iface" 2>/dev/null || true)"
 
   [[ "$cc" == "bbr" ]] || fail "验证失败：tcp_congestion_control=$cc"
-  [[ "$qdisc" == "fq" ]] || fail "验证失败：default_qdisc=$qdisc"
+
+  if (( HAS_DEFAULT_QDISC )); then
+    qdisc="$(get_sysctl_value net.core.default_qdisc)"
+    [[ "$qdisc" == "fq" ]] || fail "验证失败：default_qdisc=$qdisc"
+  fi
+
   [[ "$(extract_root_qdisc_kind "$iface_qdisc")" == "fq" ]] || fail "验证失败：$iface 上的 root qdisc 不是 fq"
 
   printf '%s\n' "$iface_qdisc"
@@ -599,6 +616,12 @@ main() {
   command -v ip >/dev/null 2>&1 || fail "未找到 ip 命令，请先安装 iproute2。"
   ensure_fq_support
   ensure_bbr_support
+  HAS_DEFAULT_QDISC=0
+  if has_sysctl_key net.core.default_qdisc; then
+    HAS_DEFAULT_QDISC=1
+  else
+    warn "当前内核未提供 net.core.default_qdisc，跳过该 sysctl，仅设置 BBR 和网卡 root qdisc。"
+  fi
 
   iface="$(get_primary_iface)"
   cpu_cores="$(get_cpu_cores)"
@@ -631,7 +654,11 @@ main() {
   log "选中的业务场景：$scenario"
   log "选中的资源档位：$resource_tier"
   log "之前的拥塞控制算法：${current_cc:-unknown}"
-  log "之前的默认 qdisc：${current_qdisc:-unknown}"
+  if (( HAS_DEFAULT_QDISC )); then
+    log "之前的默认 qdisc：${current_qdisc:-unknown}"
+  else
+    log "当前内核未暴露默认 qdisc sysctl，已跳过该项"
+  fi
   log "备份目录：$backup_dir"
   log "最多保留最近 ${MAX_BACKUP_COUNT} 份备份"
 
